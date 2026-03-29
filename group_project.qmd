@@ -1,0 +1,698 @@
+---
+title: Group project Draft
+author: Duy Anh Ngo Le
+date: 3-3-2026
+format: 
+  pdf:
+    code-overflow: wrap
+---
+
+# Question 1
+
+```{r, warning=FALSE, message=FALSE}
+library(RedditExtractoR)
+library(tidyverse)
+```
+
+## a/ (1 mark) Using the Reddit API, identify relevant thread URLs for your chosen topic. Focus on a monthly or yearly timeframe to ensure sufficient data depth.
+
+| Since the API requests sometimes get error messages due to limited access, I find the threads through API and save it to a file for later use without repeated execution.
+
+```{r, eval=FALSE}
+# Note: This file is executed only once to avoid error
+# Find all threads having "AI" keyword in the ArtificialInteligence community
+threads <- find_thread_urls(
+    subreddit = "ArtificialInteligence",
+    sort_by = "top",
+    period = "year")
+
+# Save threads to another file for later opening
+saveRDS(threads, "raw_reddit_data.rds")
+```
+
+
+```{r import-and-read-thread-data, eval=FALSE}
+#import and read the thread data
+raw_threads <- readRDS("raw_reddit_data.rds")
+glimpse(raw_threads)
+```
+
+
+**Get the Upvote scores of posts with each corresponding URL**
+
+
+```{r, eval=FALSE}
+# Note: This code block requires a long time of execution
+urls <- raw_threads$url
+meta_rw_thread <- list()
+
+for (i in 1:length(urls)) {
+  message(paste("Processing thread number", i, "at:", urls[i]))
+  
+  # Use tryCatch (skip broken links)
+  result <- tryCatch({
+    # Get thread content
+    get_thread_content(urls[i])
+  }, error = function(e) {
+    # If Error -> Print Message -> Return NULL
+    message(paste("Url Error at the thread number", i, ":", e$message))
+    return(NULL)
+  })
+  
+  # Save result whether it's null or valid
+  meta_rw_thread[[i]] <- result
+  
+  # Short pausing time
+  Sys.sleep(3) 
+}
+
+# Remove all Null data, only keep valid URL
+meta_thread_cleaned <- meta_rw_thread[!sapply(meta_rw_thread, is.null)]
+```
+
+```{r, eval=FALSE}
+# Save threads to another file for later opening
+saveRDS(meta_thread_cleaned, "meta_thread_cleaned.rds")
+```
+
+```{r}
+# Read metadata of threads collected
+meta_threads <- readRDS("meta_thread_cleaned.rds")
+```
+
+## b/ (1 mark) Find the top three threads with the highest Score (Upvotes). Retrieve and display the title and main post body of each of these three threads.
+
+```{r}
+# COMBINE ALL THREADS' METADATA INTO A SINGLE DATAFRAME
+library(purrr)
+
+# 1/ Combine all the thread metadata of each post on 
+# Reddit into a whole dataframe
+df_only_threads <- map_dfr(meta_threads, ~ .x$threads)
+
+# 2/ Take the index number of the Top 3 highest upvotes
+top_3_indices <- df_only_threads |> 
+  # set the index number as an original order in df
+  mutate(origin_index = row_number()) |> 
+  arrange(desc(upvotes)) |> # order by the upvotes descendingly
+  slice(1:3) |> # top 3 only
+  pull(origin_index) # only keep the index number
+
+# 3.1/ Top 3 thread
+df_top3_thread <- meta_threads[top_3_indices] |> 
+  map_dfr(~ .x$threads)
+
+# 3.2/ Top 3 threads' comments
+df_top3_comment <- meta_threads[top_3_indices] |> 
+  map_dfr(~ .x$comments)
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(stringi)
+library(stringr)
+
+# Convert strings to UTF-8 
+# and fix/remove invalid byte sequences to prevent processing errors.
+
+df_top3_thread$text <- stri_enc_toutf8(df_top3_thread$text, validate = TRUE)
+df_top3_thread$title <- stri_enc_toutf8(df_top3_thread$title, validate = TRUE)
+
+# Use Regular Expressions to strip non-ASCII characters 
+# (emojis, symbols, and special icons).
+df_top3_thread$text <- str_replace_all(df_top3_thread$text,
+                                         "[^\\x20-\\x7E]", "")
+df_top3_thread$title <- str_replace_all(df_top3_thread$title, 
+                                          "[^\\x20-\\x7E]", "")
+
+# Similar process for the comment content
+df_top3_comment$comment <- stri_enc_toutf8(df_top3_comment$comment,
+                                               validate = TRUE)
+df_top3_comment$comment <- str_replace_all(df_top3_comment$comment, 
+                                              "[^\\x20-\\x7E]", "")
+
+# Observe required dataframes
+glimpse(df_top3_thread) # These are the top 3 thread with highest upvotes
+glimpse(df_top3_comment) # These are the comments of the top 3
+```
+
+
+```{r}
+# print DATE, TITLE, and BODY of those threads
+
+for (i in 1:3) {
+    cat("\n\nThread", i, "\n") # Header
+    cat("---", "\n")
+    cat("DATE:", df_top3_thread$date[i], "\n")
+    cat("UPVOTE:", df_top3_thread$upvotes[i], "\n\n")
+    
+    # Wrap Title (allow 80 strings per line)
+    clean_title <- str_wrap(df_top3_thread$title[i], width = 80)
+    cat("TITLE:\n", clean_title, "\n\n")
+    
+    # Wrap Body/Text (allow 80 strings per line)
+    # str_wrap to automatically wrap the body
+    clean_text <- str_wrap(df_top3_thread$text[i], width = 80)
+    cat("BODY:\n", clean_text, "\n")
+    
+    cat("\n============================\n")
+}
+```
+
+## c/ Instead of individual words, context is key. Generate a Bigram (two-word sequence) frequency chart for the comments and replies within each of these threads. Display the top 15 most frequent bigrams for each thread.
+
+
+### c.3/ Prapare and generate a Bigram frequency chart
+
+```{r}
+# Observe the top 3 url of each thread
+unique(df_top3_comment$url)
+```
+
+```{r}
+library(tidytext)
+
+# 1/ Seperate the comments into pairs of words
+bigrams_data <- df_top3_comment |> 
+    select(url, comment) |> # take url as identification code of each thread
+    filter(!is.na(comment), comment != "") |> 
+    mutate(
+      comment = str_replace_all(comment, "(http\\S+|www\\.\\S+)",""), # remove link in the commment
+      comment = str_to_lower(comment),
+      thread_num = case_when( # Add another col that mark different urls
+        url == "https://www.reddit.com/r/ArtificialInteligence/comments/1odgfys/i_was_once_an_ai_true_believer_now_i_think_the/" ~ "Thread 1",
+        url == "https://www.reddit.com/r/ArtificialInteligence/comments/1orewim/meta_just_lost_200_billion_in_one_week_zuckerberg/"  ~ "Thread 2",
+        url == "https://www.reddit.com/r/ArtificialInteligence/comments/1kb8e09/i_lost_my_business_to_ai_who_else_so_far/" ~ "Thread 3",
+        TRUE ~ "Other threads" # If all cases are not matched
+      )
+    ) |> 
+    unnest_tokens(bigram_col, comment, token = "ngrams", n = 2) |> # add bigram_col column having pairs of words
+    filter(bigram_col != "")
+```
+
+```{r}
+# 2/ Separate pairs of words into different columns to filter stop words
+bigrams_separated <- bigrams_data |> 
+    separate(bigram_col, c("word1","word2"), sep = " ")
+
+# fitler rows having stop words
+bigrams_filtered <- bigrams_separated |> 
+    filter(!word1 %in% stop_words$word) |> 
+    filter(!word2 %in% stop_words$word)
+```
+
+```{r}
+# 3/ Combine all word pairs and filter the top 15 of each thread
+bigram_top15 <- bigrams_filtered |> 
+    unite(bigram_pairs, word1, word2, sep = " ") |> 
+    group_by(thread_num) |> # filter by identification code (each thread)
+    count(bigram_pairs, sort = TRUE) |> 
+    # slice (select) the first 15 rows (max) of the "n" column
+    slice_max(n, n=15, with_ties = FALSE) |>
+    ungroup()
+```
+
+```{r}
+# 4/ Create a bigram chart for each thread
+for (i in 1:3){
+  current_thread <- paste0("Thread ",i)
+  # Create a chart for each thread number
+  thread_chart <- bigram_top15 |> 
+    filter(thread_num == current_thread) |> 
+    ggplot(aes(x = reorder(bigram_pairs,n), y = n)) +
+      geom_col(fill = "steelblue", show.legend = FALSE, width = 0.7) +
+      coord_flip() +
+      theme_minimal() +
+      labs(title= paste0("Top 15 Bigrams of ",
+            current_thread), 
+            x = "", 
+            y = "Frequency") 
+  print(thread_chart)
+}
+```
+
+## d/ (1 mark) Comment on your Bigram charts. Do the frequent phrases indicate a positive, negative, or neutral sentiment in the discussion? Compare the tone between the three threads.
+
+
+# Question 2
+
+This is the df containing all comments in the top 15 threads
+
+```{r}
+# observe the structure of comment metadata of the top threads
+glimpse(df_top3_comment)
+```
+
+```{r}
+# This is all comments in the top three threads
+glimpse(df_top3_comment$comment)
+```
+
+## a. Combine all the comments from the top three threads collected in Question 1. Pre-process the comments (remove stopwords, punctuation, etc.) and construct a Document Term Matrix using TF-IDF weighting.
+
+```{r}
+library("tm")
+library("SnowballC")
+redditt.corpus <- Corpus(VectorSource(df_top3_comment$comment))
+redditt.corpus <- tm_map(redditt.corpus,
+                       function(x) iconv(x, to='UTF8', sub='byte'))
+```
+
+### Pre-processing
+
+```{r}
+redditt.corpus <- tm_map(redditt.corpus, function(x) iconv(x, to='ASCII', sub=' '))  
+# remove numbers 
+redditt.corpus <- tm_map(redditt.corpus, removeNumbers) 
+# remove punctuation 
+redditt.corpus <- tm_map(redditt.corpus, removePunctuation) 
+# remove white space 
+redditt.corpus <- tm_map(redditt.corpus, stripWhitespace) 
+# convert all to lowercase
+redditt.corpus <- tm_map(redditt.corpus, tolower)  
+# remove stop words 
+redditt.corpus <- tm_map(redditt.corpus, removeWords, stopwords()) 
+# convert all words to their stems
+redditt.corpus <- tm_map(redditt.corpus, stemDocument) 
+# remove special characters
+redditt.corpus <- tm_map(redditt.corpus, function(x) iconv(x, to='ASCII', sub=' ')) 
+```
+
+### Creating Document Term Matrix using TF-IDF
+
+```{r}
+# create a term document matrix
+redditt.tdm <- TermDocumentMatrix(redditt.corpus) 
+# compute TF-IDF
+redditt.wtdm <- weightTfIdf(redditt.tdm) 
+# change tdm to a document term matrix
+redditt.matrix <- t(as.matrix(redditt.wtdm))
+# remove empty tweets
+empties <- which(rowSums(abs(redditt.matrix)) == 0)
+redditt.matrix <- redditt.matrix[-empties,]
+dim(redditt.matrix)
+```
+
+## b. According to your group, what is the optimal number of clusters for these comments? Use the Elbow Method analysis to justify your argument mathematically. Explain your reasoning in detail.
+
+### Elbow Method analysis
+
+```{r}
+library(Matrix)
+reddit.matrix.sparse <- as(redditt.matrix, "sparseMatrix")
+```
+
+
+```{r}
+# Convert to dense
+reddit_tfidf_matrix <- as.matrix(reddit.matrix.sparse)
+
+wss <- sapply(1:10, function(k){
+  kmeans(reddit_tfidf_matrix, centers = k, nstart = 5)$tot.withinss
+})
+```
+
+
+```{r}
+# Plotting the graph
+plot(1:10, wss,
+     type = "b", pch = 19, frame = FALSE, 
+     xlab = "Number of K cluster",
+     ylab = "Total Within-clusters Sum of Squares (WSS)",
+     main = "Elbow Method Analysis")
+```
+
+Based on the Elbow Method Analysis graph, it is observed that the Total Within Cluster Sum of Squares (WSS) value decreases most sharply as the number of clusters increases from $k=1$ to $k=3$. From $k=3$ onwards, although WSS continues to decrease, the rate of decrease slows down significantly, forming a distinct 'elbow point' at $k=2$. Therefore, we determine the optimal number of clusters for classifying Reddit comments in this problem to be 3.
+
+## c. Create a ”Ground Truth” label for each comment based on its original thread.
+
+-   Label Thread 1 comments as ”A”
+-   Label Thread 2 comments as ”B”
+-   Label Thread 3 comments as ”C”
+
+```{r}
+library(dplyr)
+df_top3_comment <- df_top3_comment %>%
+  mutate(ground_truth = case_when(
+    url == "https://www.reddit.com/r/ArtificialInteligence/comments/1odgfys/i_was_once_an_ai_true_believer_now_i_think_the/" ~ "A",
+    url == "https://www.reddit.com/r/ArtificialInteligence/comments/1orewim/meta_just_lost_200_billion_in_one_week_zuckerberg/" ~ "B",
+    url == "https://www.reddit.com/r/ArtificialInteligence/comments/1kb8e09/i_lost_my_business_to_ai_who_else_so_far/" ~ "C",
+    TRUE ~ "Unknown"
+  ))
+table(df_top3_comment$ground_truth) #Check again
+```
+
+
+```{r}
+# Observed the dataset after applying ground truth label
+glimpse(df_top3_comment)
+```
+
+## d. Apply K-means clustering to the combined dataset. You may need to use a dimension reduction method (PCA or MDS) before applying the K-means method to improve performance.
+
+```{r}
+# Dimension reduction (PCA)
+thread_pca <- prcomp(reddit_tfidf_matrix)
+pca_data <- as.data.frame(thread_pca$x[, 1:4]) # Check first 4 components
+head(pca_data, 30)
+```
+
+As seen in the PCA results, the components have extremely small values, which ranging from $10^{-15}$ to $10^{-17}$, suggesting that the variance cannot be fully captured by using the PCA since the data is scattered to show clear separation. Hence, it is vital to use the multidimensional scaling (MDS) for text data for it will preserve the distance between comments.
+
+```{r}
+# Dimension reduction (MDS)
+library(proxy)
+
+# Calculate Cosine Distance Matrix
+distance_matrix <- proxy::dist(reddit_tfidf_matrix, method = "cosine")
+```
+
+```{r}
+# Run MDS on cmdscale
+# With k = 2, reduce the dataset to 2 dimensions
+thread_mds <- cmdscale(distance_matrix, k = 2)
+
+# Create a data frame for clustering and plotting
+threat_mds_data <- as.data.frame(thread_mds)
+colnames(threat_mds_data) <- c("Dim1", "Dim2")
+```
+
+```{r}
+# Apply K-means clustering with k=3
+set.seed(123)
+k.mean.value <- 3
+thread_clusters <- kmeans(threat_mds_data, centers = k.mean.value, nstart = 25)
+```
+
+```{r}
+names(thread_clusters)
+```
+
+```{r}
+# Combine the result with ground truth labels
+threat_mds_data$cluster <- as.factor(thread_clusters$cluster)
+
+
+num_rows <- as.numeric(rownames(threat_mds_data)) # Identify available rows in MDS data
+matched_value <- df_top3_comment$ground_truth[num_rows] # Apply labels with those rows
+threat_mds_data$ground_truth <- factor(matched_value, labels = c("A", "B", "C"))
+```
+
+## e. Visualize the results of your clustering in a 2D vector space. Color the points by their assigned cluster but use different markers (shapes) to represent their original thread label.
+
+```{r}
+library(ggplot2)
+
+ggplot(threat_mds_data, aes(x = Dim1, y = Dim2, color = cluster, shape = ground_truth)) +
+  geom_point(size = 3, alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "MDS Visualization of Reddit Comments",
+       x = "MDS Dimension 1",
+       y = "MDS Dimension 2",
+       color = "K-means Cluster",
+       shape = "Original Labels") +
+  scale_color_brewer(palette = "Set1")
+```
+
+## f. Comment on your findings. Did the K-means algorithm successfully reconstruct the original thread boundaries? Discuss any overlaps observed in the visualization.
+
+-   **Thread boundaries:** The K-means is not suitable for reconstructing the thread boundaries. The threads labels with different shapes are scattered among the three groups, and are not visibly distinguished within the clusters.
+
+-   **Visualization overlaps:** Along the right side of the plot, there is a significant amount of vertical overlap.
+
+    -   The dense vertical line 0.0 indicates that the majority of comments in all three threads use a highly similar vocabulary. With the word artificial intelligence, this probably indicates that users were using the same terms, such as AI, model, or data, across all threads, making it challenging for the algorithm to identify a clear mathematical difference across the discussions.
+
+    -   Cluster red represents a small, distinct comments that are separated. These are distinct comments that differ greatly from the rest of the dataset in terms of vocabulary, for example, technical discussions, short comments, or irrelevant spam.
+
+    -   Rather of dividing the AI conversation by their original thread labels, the clusters blue and green effectively divided it in half based on little differences in attitude or subtopics.
+
+"Artificial Intelligence" seems to be a frequent subject in these Reddit threads. This overlap implies that the discussions within the posts are linguistically similar using the K-means model, even though their titles may differ. Since K-means is a central-based approach, comments in Threads A, B, and C overlap in the MDS graph because the mathematical distance between them is almost zero.
+
+# Question 3
+
+```{r}
+dim(df_only_threads)
+```
+
+## Scatter plot
+
+```{r}
+plot(df_only_threads$comments, df_only_threads$score,
+     main = "Relationship between Score & Number of Comments",
+     xlab = "Thread Score (Upvotes)",
+     ylab = "Number of Comments",
+     pch = 1,
+     col = "steelblue")
+```
+
+Based on the scatter plot, we can observe a positive linear relationship between thread scores (Score/Upvotes) and the number of comments. Generally, the higher a post's score, the greater the likelihood of it receiving more attention and discussion from the community.
+
+However, the data points are highly dispersed, especially in the group of posts with high scores. Notably, there are 'outliers' that show extremely high engagement. For example, a thread with a score of only around 1,200 attracted over 6,000 comments (the highest in the dataset). Conversely, some threads with very high scores (above 1,500) had significantly lower discussion volumes compared to posts with average scores.
+
+Although the scatter plot shows a positive relationship visually, to validate this relationship as statistically significant and to measure the specific impact of scores on comment volume, Linear Regression will be implemented in the following section.
+
+## Linear Regression
+
+```{r}
+# Run a linear regression model.
+lm_reg <- lm(comments ~ score, data = df_only_threads)
+# Plot the linear regression line
+plot(df_only_threads$comments, df_only_threads$score,
+     main = "Relationship between Score & Number of Comments",
+     xlab = "Thread Score (Upvotes)",
+     ylab = "Number of Comments",
+     pch = 1,
+     col = "steelblue")
+abline(lm_reg, col = "red", lwd = 1.5)
+grid(col = "lightgray", lty = "dotted")
+```
+
+```{r}
+summary(lm_reg)
+```
+
+Overall, the regression model achieved a statistical value of F = 226.8 with a p-value \< 2.2e-16. Since this value is below the significance level of 0.05, it can conclude that the model is statistically significant and that the Score variable is an important predictor of the number of comments.
+
+Specifically, the regression results show that the score variable has a very positive and statistically significant impact on the number of comments (p \< 2e-16). Particularly, the regression coefficient of the score variable is 0.2319, which means that, all other factors being constant, when a thread gains 1 Upvote point, it is expected to receive approximately 0.23 more comments. The extremely small p-value of the score variable indicates that this relationship is not random and that the score variable is an important predictor in the model.
+
+Moreover, regarding the model's explanatory ability, the Multiple R-squared value reached 0.3146. This indicates that approximately 31.46% of the variation in the number of comments can be explained by the post's score. Similarly, the Adjusted R-squared value reached a comparable level of 0.3132. The close correlation between these two indicators suggests that the current simple regression model is quite stable and not overfitting.
+
+In conclusion, the linear regression results confirm that thread scores have a positive influence on the number of comments. However, sine the R-square is quite low (31.46%), it can be seen that the score is not the only factor determining the level of interaction. Therefore, a post with a high Upvotes score does not necessarily guarantee a corresponding amount of discussion, as engagement on Reddit is also strongly influenced by other factors such as content and topic characteristics.
+
+# Question 4:
+
+## a. Using the Mastodon API, identify users related to your chosen topic. Identify the top three most popular users based on the highest number of Statuses (Posts) (i.e., the most active users, rather than just the most followed).
+
+```{r}
+library(purrr)
+library(dplyr)
+library(tidyverse)
+```
+
+
+```{r, eval=FALSE}
+# Connect with the Mastodon account
+auth_setup(instance = "mastodon.social", type = "user")
+
+# Search accounts related to the topic of AI
+mastodon_ai_accounts <- search_accounts("Artificial Intelligence")
+
+# Save to the file for further use
+saveRDS(mastodon_ai_accounts, "mastodon_ai_accounts.rds")
+```
+
+
+```{r}
+mastodon_ai_accounts <- readRDS("D:\\Downloads\\mastodon_ai_accounts.rds")
+dim(mastodon_ai_accounts)
+```
+
+There are 40 accounts related to this topic of "Artificial Intelligence".
+
+
+```{r}
+# Look at the note to see what contents about the AI topic
+mastodon_ai_accounts$note[1:10]
+```
+
+As can be seen, the topic of Artificial Intelligence contains not only the discussion on technology, but also about the usage of AI in different fields such as art, machine learning, along with AI news, along with the usage of AI. 
+
+
+```{r}
+names(mastodon_ai_accounts)
+```
+
+
+```{r}
+# Top 3 most popular users
+top_3_users <- mastodon_ai_accounts %>%
+  distinct(mastodon_ai_accounts$id, .keep_all = TRUE) %>%
+  arrange(desc(mastodon_ai_accounts$statuses_count)) %>%
+  slice(1:3)
+
+# View the IDs of your top 3
+print(top_3_users)
+```
+
+
+```{r}
+top_3_users$statuses_count
+top_3_users$followers_count
+top_3_users$following_count
+```
+
+These top 3 accounts have the highest number of status counts, which 11031, 10782, and 9059 respectively. However, considering the number of followers and the following count, there are 2 accounts which have no or limited followers and following number, such as the account "artificial-intelligence-machine-learning-MattMagnuson@flipboard.com" and "BrynSim@botsin.space". This is because these accounts may be automation account using bot ("BrynSim"), privacy settings, or new accounts which imported posts from other social platforms but has not build the network on Mastodon. Hence, it is important to filter these accounts.
+
+```{r}
+# Define the minimum number of followers and following
+minimum_followers <- 50
+minimum_following <- 50
+```
+
+
+```{r}
+# Top 3 most popular users
+top_3_active_users <- mastodon_ai_accounts %>%
+  filter(followers_count >= minimum_followers,
+         following_count >= minimum_following) %>%
+  distinct(id, .keep_all = TRUE) %>%
+  arrange(desc(statuses_count)) %>%
+  slice(1:3)
+
+# View the IDs of your top 3
+print(top_3_active_users)
+```
+
+
+```{r}
+top_3_active_users$statuses_count
+top_3_active_users$followers_count
+top_3_active_users$following_count
+```
+
+
+```{r}
+# rename this
+names(top_3_active_users)
+```
+
+
+```{r}
+# The top 3 active accounts for Artificial Intelligence topic
+top_3_active_users$acct
+```
+
+
+```{r}
+top_3_active_users$note
+```
+
+As can be seen, these users are not strictly focused on AI but a combination of different usages of AI in many fields and technology.
+
+-   The first account is an individual which leverage AI in art. The project "Bittersweet Hearts" is created by using AI tools to produce artistic content. This suggests that AI is being adopted in several fields including creativity, not only for technical or business context.
+
+-   The second account content is for helping users  to enhance the AI prompts and improve the results in various areas such as career growth, money, or productivity. This presents that the account is mainly about digital marketing or business related fields using AI tools for practical outcomes.
+
+-   The third user is more personal and giving a philosophical aspect, towards the combination of technology, creativity, and critical thinking.
+
+
+## b. Download 50 followers and 50 friends (users they follow) for these top 3 active users. Create a graph and visualize the network structure.
+
+
+```{r, eval=FALSE}
+# Create a list to store the result
+network_data <- list()
+
+# Using loops to extract 50 followers and 50 friends of the top accounts
+for (i in 1:nrow(top_3_active_users)) {
+  # Extract current user details
+  account_id <- top_3_active_users$id[i]
+  account_name <- top_3_active_users$username[i]
+  message(paste("Network of:", account_name))
+  
+  # Get 50 followers
+  followers <- get_account_followers(account_id, limit = 50)
+    
+    # Check if data exists and has columns
+    if (length(followers) > 0 && "acct" %in% names(followers)) {
+      topacc_followers <- followers %>%
+        mutate(type = "follower", 
+               source = acct, 
+               target = account_name) %>%
+        select(source, target, type)
+    } else {
+      topacc_followers <- data.frame(source=character(), 
+                                     target=character(), 
+                                     type=character())
+    }
+  # Get 50 friends
+    friends <- get_account_following(account_id, limit = 50)
+    
+    if (length(friends) > 0 && "acct" %in% names(friends)) {
+      topacc_friends <- friends %>%
+        mutate(type = "friend", 
+               source = account_name, 
+               target = acct) %>%
+        select(source, target, type)
+    } else {
+      topacc_friends <- data.frame(source=character(), 
+                                   target=character(), 
+                                   type=character())
+    }
+    
+    # Combine the results for each user
+    network_data[[i]] <- bind_rows(topacc_followers, topacc_friends)
+    Sys.sleep(1) # Short pausing time
+}
+
+saveRDS(network_data, "network_data.rds")
+```
+
+
+```{r}
+network_data <- readRDS("D:\\Downloads\\network_data.rds")
+head(network_data)
+```
+
+
+```{r}
+# Combine the results to an edge list
+all_acc_edges <- bind_rows(network_data)
+
+# Simplify for the graph (Source -> Target)
+acc_edges <- all_acc_edges %>%
+  select(source, target)
+
+# View the structure
+print(head(acc_edges))
+```
+
+
+```{r}
+library(igraph)
+library(ggraph)
+
+# Create a directed graph from the edge list
+network_graph <- graph_from_data_frame(d = acc_edges, directed = TRUE)
+
+# Print summary to verify nodes and edges
+print(network_graph)
+```
+
+
+```{r fig.width=12, fig.height=8}
+ggraph(network_graph, layout = "fr") +
+  # The connections
+  geom_edge_link(aes(alpha = 0.3), show.legend = FALSE) +
+  # The users as points
+  geom_node_point(color = "skyblue", size = 3) +
+  # Add labels to "Top 3" users
+  geom_node_text(aes(label = name),
+                 repel = TRUE,
+                 size = 4,
+                 max.overlaps = 10) +
+  theme_graph(base_family = "sans") +
+  labs(title = "Mastodon AI Topic Network")
+```
+
+
+
