@@ -1,1 +1,1 @@
-# social-web-analytics-group-project
+# Social Web Analytics - Group Project
