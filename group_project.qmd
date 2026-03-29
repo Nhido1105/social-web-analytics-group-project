@@ -1,7 +1,5 @@
 ---
-title: Group project Draft
-author: Duy Anh Ngo Le
-date: 3-3-2026
+title: Social Web Analytics - Group Project 
 format: 
   pdf:
     code-overflow: wrap
@@ -14,7 +12,7 @@ library(RedditExtractoR)
 library(tidyverse)
 ```
 
-## a/ (1 mark) Using the Reddit API, identify relevant thread URLs for your chosen topic. Focus on a monthly or yearly timeframe to ensure sufficient data depth.
+## a. Using the Reddit API, identify relevant thread URLs for your chosen topic. Focus on a monthly or yearly timeframe to ensure sufficient data depth.
 
 | Since the API requests sometimes get error messages due to limited access, I find the threads through API and save it to a file for later use without repeated execution.
 
@@ -30,16 +28,13 @@ threads <- find_thread_urls(
 saveRDS(threads, "raw_reddit_data.rds")
 ```
 
-
-```{r import-and-read-thread-data, eval=FALSE}
+```{r import-and-read-thread-data}
 #import and read the thread data
 raw_threads <- readRDS("raw_reddit_data.rds")
 glimpse(raw_threads)
 ```
 
-
 **Get the Upvote scores of posts with each corresponding URL**
-
 
 ```{r, eval=FALSE}
 # Note: This code block requires a long time of execution
@@ -80,7 +75,7 @@ saveRDS(meta_thread_cleaned, "meta_thread_cleaned.rds")
 meta_threads <- readRDS("meta_thread_cleaned.rds")
 ```
 
-## b/ (1 mark) Find the top three threads with the highest Score (Upvotes). Retrieve and display the title and main post body of each of these three threads.
+## b. Find the top three threads with the highest Score (Upvotes). Retrieve and display the title and main post body of each of these three threads.
 
 ```{r}
 # COMBINE ALL THREADS' METADATA INTO A SINGLE DATAFRAME
@@ -158,10 +153,10 @@ for (i in 1:3) {
 }
 ```
 
-## c/ Instead of individual words, context is key. Generate a Bigram (two-word sequence) frequency chart for the comments and replies within each of these threads. Display the top 15 most frequent bigrams for each thread.
+## c. Instead of individual words, context is key. Generate a Bigram (two-word sequence) frequency chart for the comments and replies within each of these threads. Display the top 15 most frequent bigrams for each thread.
 
 
-### c.3/ Prapare and generate a Bigram frequency chart
+### Prapare and generate a Bigram frequency chart
 
 ```{r}
 # Observe the top 3 url of each thread
@@ -171,12 +166,12 @@ unique(df_top3_comment$url)
 ```{r}
 library(tidytext)
 
-# 1/ Seperate the comments into pairs of words
+# 1/ Separate the comments into pairs of words
 bigrams_data <- df_top3_comment |> 
     select(url, comment) |> # take url as identification code of each thread
     filter(!is.na(comment), comment != "") |> 
     mutate(
-      comment = str_replace_all(comment, "(http\\S+|www\\.\\S+)",""), # remove link in the commment
+      comment = str_replace_all(comment, "(http\\S+|www\\.\\S+)",""), # remove link in the comment
       comment = str_to_lower(comment),
       thread_num = case_when( # Add another col that mark different urls
         url == "https://www.reddit.com/r/ArtificialInteligence/comments/1odgfys/i_was_once_an_ai_true_believer_now_i_think_the/" ~ "Thread 1",
@@ -190,6 +185,8 @@ bigrams_data <- df_top3_comment |>
 ```
 
 ```{r}
+library(SnowballC)
+
 # 2/ Separate pairs of words into different columns to filter stop words
 bigrams_separated <- bigrams_data |> 
     separate(bigram_col, c("word1","word2"), sep = " ")
@@ -197,7 +194,11 @@ bigrams_separated <- bigrams_data |>
 # fitler rows having stop words
 bigrams_filtered <- bigrams_separated |> 
     filter(!word1 %in% stop_words$word) |> 
-    filter(!word2 %in% stop_words$word)
+    filter(!word2 %in% stop_words$word) |> 
+    mutate( # stemming words
+      word1 = wordStem(word1, language = "en"),
+      word2 = wordStem(word2, language = "en")
+    )
 ```
 
 ```{r}
@@ -230,8 +231,23 @@ for (i in 1:3){
 }
 ```
 
-## d/ (1 mark) Comment on your Bigram charts. Do the frequent phrases indicate a positive, negative, or neutral sentiment in the discussion? Compare the tone between the three threads.
+## d. Comment on your Bigram charts. Do the frequent phrases indicate a positive, negative, or neutral sentiment in the discussion? Compare the tone between the three threads.
 
+### Thread 1
+
+In general, this thread has both negative and neutral sentiment in the discussion. While some words such as "black box", "ai slop", and "bubbl pop" may imply the skeptical and cautious comments of users related to leveraging AI in work, "claude code", "gpt 5", or "train data" have a neutral tone when they are technical terms in AI discussions.
+
+### Thread 2
+
+Compared to the first and final threads, this post has the significantly negative sentiment. Terms such as "metaverse 2.0", "ai race", "ai bubble", or "ai slop" might convey the highly competitive market of the AI industry and the overrated AI potential on social media.
+
+### Thread 3
+
+Similarly to the first two threads, this post has negative sentiment, which concentrates more on the social and economic aspects related to the AI development. Some words such as "blue collar", "basic income", "collar job", or "bad idea" reflect a quite anxiety of users about the future when AI could replace humans in certain jobs, thereby impacting the social structure. In addition, there are also some neutral-tone words such as "art school", "software engineer" that might mention fields affected by the development of AI.
+
+### Conclusion
+
+In summary, high-scoring threads regarding Artificial Intelligence on Reddit tend to have negative and neutral sentiments. In addition, it can be further suggested that sharing negative feelings about a problem (in this case, AI-related stories) tends to receive more empathy and engagement from users within the community, thereby raising the upvotes (scores) of a thread.
 
 # Question 2
 
@@ -246,75 +262,73 @@ glimpse(df_top3_comment)
 # This is all comments in the top three threads
 glimpse(df_top3_comment$comment)
 ```
-
 ## a. Combine all the comments from the top three threads collected in Question 1. Pre-process the comments (remove stopwords, punctuation, etc.) and construct a Document Term Matrix using TF-IDF weighting.
 
 ```{r}
 library("tm")
 library("SnowballC")
-redditt.corpus <- Corpus(VectorSource(df_top3_comment$comment))
-redditt.corpus <- tm_map(redditt.corpus,
+redditt.corpus = Corpus(VectorSource(df_top3_comment$comment))
+redditt.corpus = tm_map(redditt.corpus,
                        function(x) iconv(x, to='UTF8', sub='byte'))
 ```
 
 ### Pre-processing
 
 ```{r}
-redditt.corpus <- tm_map(redditt.corpus, function(x) iconv(x, to='ASCII', sub=' '))  
+redditt.corpus = tm_map(redditt.corpus, function(x) iconv(x, to='ASCII', sub=' '))  
 # remove numbers 
-redditt.corpus <- tm_map(redditt.corpus, removeNumbers) 
+redditt.corpus = tm_map(redditt.corpus, removeNumbers) 
 # remove punctuation 
-redditt.corpus <- tm_map(redditt.corpus, removePunctuation) 
-# remove white space 
-redditt.corpus <- tm_map(redditt.corpus, stripWhitespace) 
+redditt.corpus = tm_map(redditt.corpus, removePunctuation) 
+# remove whitespace 
+redditt.corpus = tm_map(redditt.corpus, stripWhitespace) 
 # convert all to lowercase
-redditt.corpus <- tm_map(redditt.corpus, tolower)  
-# remove stop words 
-redditt.corpus <- tm_map(redditt.corpus, removeWords, stopwords()) 
+redditt.corpus = tm_map(redditt.corpus, tolower)  
+# remove stopwords 
+redditt.corpus = tm_map(redditt.corpus, removeWords, stopwords()) 
 # convert all words to their stems
-redditt.corpus <- tm_map(redditt.corpus, stemDocument) 
+redditt.corpus = tm_map(redditt.corpus, stemDocument) 
 # remove special characters
-redditt.corpus <- tm_map(redditt.corpus, function(x) iconv(x, to='ASCII', sub=' ')) 
+redditt.corpus = tm_map(redditt.corpus, function(x) iconv(x, to='ASCII', sub=' ')) 
 ```
 
 ### Creating Document Term Matrix using TF-IDF
-
 ```{r}
 # create a term document matrix
-redditt.tdm <- TermDocumentMatrix(redditt.corpus) 
+redditt.tdm =TermDocumentMatrix(redditt.corpus) 
 # compute TF-IDF
-redditt.wtdm <- weightTfIdf(redditt.tdm) 
+redditt.wtdm = weightTfIdf(redditt.tdm) 
 # change tdm to a document term matrix
-redditt.matrix <- t(as.matrix(redditt.wtdm))
+redditt.matrix = t(as.matrix(redditt.wtdm))
 # remove empty tweets
-empties <- which(rowSums(abs(redditt.matrix)) == 0)
-redditt.matrix <- redditt.matrix[-empties,]
+empties = which(rowSums(abs(redditt.matrix)) == 0)
+redditt.matrix = redditt.matrix[-empties,]
 dim(redditt.matrix)
 ```
 
 ## b. According to your group, what is the optimal number of clusters for these comments? Use the Elbow Method analysis to justify your argument mathematically. Explain your reasoning in detail.
 
 ### Elbow Method analysis
-
 ```{r}
 library(Matrix)
 reddit.matrix.sparse <- as(redditt.matrix, "sparseMatrix")
 ```
 
-
 ```{r}
 # Convert to dense
 reddit_tfidf_matrix <- as.matrix(reddit.matrix.sparse)
 
-wss <- sapply(1:10, function(k){
-  kmeans(reddit_tfidf_matrix, centers = k, nstart = 5)$tot.withinss
-})
+# Define a random k number
+k_max <- 10
+# Caculate Total Within Sum of Square
+wss <- sapply(1:k_max, function(k){
+  kmeans(reddit_tfidf_matrix, centers = k, nstart = 5, iter.max = 50)$tot.withinss
+}) 
 ```
-
 
 ```{r}
 # Plotting the graph
-plot(1:10, wss,
+plot(1:k_max, wss,
      type = "b", pch = 19, frame = FALSE, 
      xlab = "Number of K cluster",
      ylab = "Total Within-clusters Sum of Squares (WSS)",
@@ -323,11 +337,12 @@ plot(1:10, wss,
 
 Based on the Elbow Method Analysis graph, it is observed that the Total Within Cluster Sum of Squares (WSS) value decreases most sharply as the number of clusters increases from $k=1$ to $k=3$. From $k=3$ onwards, although WSS continues to decrease, the rate of decrease slows down significantly, forming a distinct 'elbow point' at $k=2$. Therefore, we determine the optimal number of clusters for classifying Reddit comments in this problem to be 3.
 
+
 ## c. Create a ”Ground Truth” label for each comment based on its original thread.
 
--   Label Thread 1 comments as ”A”
--   Label Thread 2 comments as ”B”
--   Label Thread 3 comments as ”C”
+- Label Thread 1 comments as "A"
+- Label Thread 2 comments as "B"
+- Label Thread 3 comments as "C"
 
 ```{r}
 library(dplyr)
@@ -339,12 +354,6 @@ df_top3_comment <- df_top3_comment %>%
     TRUE ~ "Unknown"
   ))
 table(df_top3_comment$ground_truth) #Check again
-```
-
-
-```{r}
-# Observed the dataset after applying ground truth label
-glimpse(df_top3_comment)
 ```
 
 ## d. Apply K-means clustering to the combined dataset. You may need to use a dimension reduction method (PCA or MDS) before applying the K-means method to improve performance.
@@ -419,22 +428,20 @@ ggplot(threat_mds_data, aes(x = Dim1, y = Dim2, color = cluster, shape = ground_
 
 -   **Visualization overlaps:** Along the right side of the plot, there is a significant amount of vertical overlap.
 
-    -   The dense vertical line 0.0 indicates that the majority of comments in all three threads use a highly similar vocabulary. With the word artificial intelligence, this probably indicates that users were using the same terms, such as AI, model, or data, across all threads, making it challenging for the algorithm to identify a clear mathematical difference across the discussions.
+    - The dense vertical line 0.0 indicates that the majority of comments in all three threads use a highly similar vocabulary. With the word artificial intelligence, this probably indicates that users were using the same terms, such as AI, model, or data, across all threads, making it challenging for the algorithm to identify a clear mathematical difference across the discussions.
 
-    -   Cluster red represents a small, distinct comments that are separated. These are distinct comments that differ greatly from the rest of the dataset in terms of vocabulary, for example, technical discussions, short comments, or irrelevant spam.
+    - Cluster red represents a small, distinct comments that are separated. These are distinct comments that differ greatly from the rest of the dataset in terms of vocabulary, for example, technical discussions, short comments, or irrelevant spam.
 
-    -   Rather of dividing the AI conversation by their original thread labels, the clusters blue and green effectively divided it in half based on little differences in attitude or subtopics.
+    - Rather of dividing the AI conversation by their original thread labels, the clusters blue and green effectively divided it in half based on little differences in attitude or subtopics.
 
 "Artificial Intelligence" seems to be a frequent subject in these Reddit threads. This overlap implies that the discussions within the posts are linguistically similar using the K-means model, even though their titles may differ. Since K-means is a central-based approach, comments in Threads A, B, and C overlap in the MDS graph because the mathematical distance between them is almost zero.
 
 # Question 3
-
 ```{r}
 dim(df_only_threads)
 ```
 
 ## Scatter plot
-
 ```{r}
 plot(df_only_threads$comments, df_only_threads$score,
      main = "Relationship between Score & Number of Comments",
@@ -444,14 +451,15 @@ plot(df_only_threads$comments, df_only_threads$score,
      col = "steelblue")
 ```
 
-Based on the scatter plot, we can observe a positive linear relationship between thread scores (Score/Upvotes) and the number of comments. Generally, the higher a post's score, the greater the likelihood of it receiving more attention and discussion from the community.
+**Comment on scatter plot:**
 
-However, the data points are highly dispersed, especially in the group of posts with high scores. Notably, there are 'outliers' that show extremely high engagement. For example, a thread with a score of only around 1,200 attracted over 6,000 comments (the highest in the dataset). Conversely, some threads with very high scores (above 1,500) had significantly lower discussion volumes compared to posts with average scores.
+According to the scatter plot, it can be seen that there is a positive linear relationship between thread scores and the number of comments. This means that the higher a post's score, the greater the likelihood of it receiving more attention and discussion from the community.
 
-Although the scatter plot shows a positive relationship visually, to validate this relationship as statistically significant and to measure the specific impact of scores on comment volume, Linear Regression will be implemented in the following section.
+However, the data points are highly dispersed, especially in the group of posts with high scores. Notably, there are outliers that show extremely high engagement. For example, a thread with a score of only around 1,200 attracted over 6,000 comments (the highest in the dataset). Conversely, some threads with very high scores (above 1,500) had significantly lower discussion volumes compared to posts with average scores.
+
+Although the scatter plot shows a positive relationship visually, to validate this relationship and to measure the specific impact of scores on comment volume, Linear Regression will be implemented in the following section.
 
 ## Linear Regression
-
 ```{r}
 # Run a linear regression model.
 lm_reg <- lm(comments ~ score, data = df_only_threads)
@@ -470,13 +478,16 @@ grid(col = "lightgray", lty = "dotted")
 summary(lm_reg)
 ```
 
-Overall, the regression model achieved a statistical value of F = 226.8 with a p-value \< 2.2e-16. Since this value is below the significance level of 0.05, it can conclude that the model is statistically significant and that the Score variable is an important predictor of the number of comments.
+**Comment on the regression result**
 
-Specifically, the regression results show that the score variable has a very positive and statistically significant impact on the number of comments (p \< 2e-16). Particularly, the regression coefficient of the score variable is 0.2319, which means that, all other factors being constant, when a thread gains 1 Upvote point, it is expected to receive approximately 0.23 more comments. The extremely small p-value of the score variable indicates that this relationship is not random and that the score variable is an important predictor in the model.
+Overall, the regression model achieved a statistical value of F = 195.5 with a p-value < 2.2e-16. Since this value is below the significance level of 0.05, it can conclude that the model is statistically significant and the Score variable is an important predictor of the number of comments.
 
-Moreover, regarding the model's explanatory ability, the Multiple R-squared value reached 0.3146. This indicates that approximately 31.46% of the variation in the number of comments can be explained by the post's score. Similarly, the Adjusted R-squared value reached a comparable level of 0.3132. The close correlation between these two indicators suggests that the current simple regression model is quite stable and not overfitting.
+Specifically, the regression results show that the score variable has a positive and significant impact on the number of comments (since p < 2e-16). Particularly, the regression coefficient of the score variable is  0.22221, which means that, all other factors being constant, when a thread gains 1 Upvote point, it is expected to receive approximately 0.22 more comments. The extremely small p-value of the score variable indicates that this relationship is not random.
 
-In conclusion, the linear regression results confirm that thread scores have a positive influence on the number of comments. However, sine the R-square is quite low (31.46%), it can be seen that the score is not the only factor determining the level of interaction. Therefore, a post with a high Upvotes score does not necessarily guarantee a corresponding amount of discussion, as engagement on Reddit is also strongly influenced by other factors such as content and topic characteristics.
+Moreover, regarding the model's explanatory ability, the Multiple R-squared value reached  0.3101. This indicates that approximately 31% of the variation in the number of comments can be explained by the post's score. Similarly, the Adjusted R-squared value reached a comparable level of 0.3085. The close difference between these two indicators suggests that the current simple regression model is quite stable and not overfitting.
+
+In conclusion, the linear regression results confirm that thread scores have a positive influence on the number of comments. However, since the R-square is quite low  (31%), it can be seen that the score is not the only factor determining the level of interaction. Therefore, a post with a high Upvotes score does not necessarily guarantee a corresponding amount of discussion, as engagement on Reddit is also strongly influenced by other factors such as content and topic characteristics.
+
 
 # Question 4:
 
@@ -486,6 +497,7 @@ In conclusion, the linear regression results confirm that thread scores have a p
 library(purrr)
 library(dplyr)
 library(tidyverse)
+library(rtoot)
 ```
 
 
@@ -514,7 +526,7 @@ There are 40 accounts related to this topic of "Artificial Intelligence".
 mastodon_ai_accounts$note[1:10]
 ```
 
-As can be seen, the topic of Artificial Intelligence contains not only the discussion on technology, but also about the usage of AI in different fields such as art, machine learning, along with AI news, along with the usage of AI. 
+As can be seen, the topic of Artificial Intelligence contains not only the discussion on technology, but also about the usage of AI in different areas such as art, machine learning, along with AI news. 
 
 
 ```{r}
@@ -560,6 +572,26 @@ top_3_active_users <- mastodon_ai_accounts %>%
 
 # View the IDs of your top 3
 print(top_3_active_users)
+top_3_active_users$acct
+```
+
+Following this result, the first two accounts have the ending with 'threads.net', and these accounts will derive followers and followings from another social media platforms, and this will show null value when analyze network on Mastodon. Thus, it is vital to remove this type of account for better network analysis result.
+
+
+```{r}
+# Top 3 most popular users
+top_3_active_users <- mastodon_ai_accounts %>%
+  filter(!str_detect(acct, "threads.net")) %>% 
+  # Avoid threads accounts which derived followers and friends from other social platforms
+  filter(followers_count >= minimum_followers,
+         following_count >= minimum_following) %>%
+  distinct(id, .keep_all = TRUE) %>%
+  arrange(desc(statuses_count)) %>%
+  slice(1:3)
+
+# View the IDs of your top 3
+print(top_3_active_users)
+top_3_active_users$acct
 ```
 
 
@@ -571,14 +603,8 @@ top_3_active_users$following_count
 
 
 ```{r}
-# rename this
-names(top_3_active_users)
-```
-
-
-```{r}
-# The top 3 active accounts for Artificial Intelligence topic
 top_3_active_users$acct
+top_3_active_users$username
 ```
 
 
@@ -588,11 +614,11 @@ top_3_active_users$note
 
 As can be seen, these users are not strictly focused on AI but a combination of different usages of AI in many fields and technology.
 
--   The first account is an individual which leverage AI in art. The project "Bittersweet Hearts" is created by using AI tools to produce artistic content. This suggests that AI is being adopted in several fields including creativity, not only for technical or business context.
+-   The first user is a personal account and giving a philosophical aspect, an information explorer, towards the combination of technology, creativity, and critical thinking. With a very high number of 4203 posts, high friends (1856) and followers (222), this account follows a wide users to gather diverse information, and also connect with various communities. A lower follower counts shows that the influence of this account is highly connected. 
 
--   The second account content is for helping users  to enhance the AI prompts and improve the results in various areas such as career growth, money, or productivity. This presents that the account is mainly about digital marketing or business related fields using AI tools for practical outcomes.
+-   The second account is an engineer with a professional specialty in artificial intelligence and a strong academic background. This user has a PhD about AI engineering, and currently focus on balancing AI innovation with privacy protections, and giving high-impact research in real world situation. The second user has more followers than friends, 304 and 121 respectively, indicating that they target a high quality audience.
 
--   The third user is more personal and giving a philosophical aspect, towards the combination of technology, creativity, and critical thinking.
+-   The third user is an experienced art director for movie projects, and may be an influencer in the creative community. This individual has several contributions to various animated films, and has a proficient background in creative leadership, animation, and digital art. This account has lower posts of 185 but has highest followers of 887, suggested high value contents of creative AI visuals in digital art. 
 
 
 ## b. Download 50 followers and 50 friends (users they follow) for these top 3 active users. Create a graph and visualize the network structure.
@@ -600,14 +626,13 @@ As can be seen, these users are not strictly focused on AI but a combination of 
 
 ```{r, eval=FALSE}
 # Create a list to store the result
-network_data <- list()
+network_list <- list()
 
 # Using loops to extract 50 followers and 50 friends of the top accounts
 for (i in 1:nrow(top_3_active_users)) {
   # Extract current user details
   account_id <- top_3_active_users$id[i]
   account_name <- top_3_active_users$username[i]
-  message(paste("Network of:", account_name))
   
   # Get 50 followers
   followers <- get_account_followers(account_id, limit = 50)
@@ -640,11 +665,11 @@ for (i in 1:nrow(top_3_active_users)) {
     }
     
     # Combine the results for each user
-    network_data[[i]] <- bind_rows(topacc_followers, topacc_friends)
-    Sys.sleep(1) # Short pausing time
+    network_list[[i]] <- bind_rows(topacc_followers, topacc_friends)
+    Sys.sleep(1) # Shorten loading time
 }
 
-saveRDS(network_data, "network_data.rds")
+saveRDS(network_list, "network_data.rds")
 ```
 
 
@@ -658,6 +683,9 @@ head(network_data)
 # Combine the results to an edge list
 all_acc_edges <- bind_rows(network_data)
 
+# View the data
+print(all_acc_edges, n=150)
+
 # Simplify for the graph (Source -> Target)
 acc_edges <- all_acc_edges %>%
   select(source, target)
@@ -667,7 +695,7 @@ print(head(acc_edges))
 ```
 
 
-```{r}
+```{r, warning=FALSE}
 library(igraph)
 library(ggraph)
 
@@ -691,8 +719,59 @@ ggraph(network_graph, layout = "fr") +
                  size = 4,
                  max.overlaps = 10) +
   theme_graph(base_family = "sans") +
-  labs(title = "Mastodon AI Topic Network")
+  labs(title = "Top 3 Mastodon Active Accounts Network About AI Topic")
 ```
 
+The graph shows clear group pattern for each top user, with many surrounding nodes and connect to the central user. This indicates that each person has separated network and their own community. Furthermore, there are low interconnection between followers, showing an interested-based with a central user, loosely clusters, and not tight communities.
 
+
+## c. Calculate both the Degree Centrality and the PageRank for the nodes in your graph.
+
+- Identify the top user for each metric.
+
+- Comment on the differences: Does the user with the most connections (Degree) also have the highest influence/quality connections (PageRank)?
+
+```{r}
+# Calculate Degree Centrality
+central_degree <- degree(network_graph, mode = "all")
+head(central_degree)
+
+# Calculate Pagerank
+pagerk <- page_rank(network_graph)$vector
+head(pagerk)
+```
+
+```{r}
+# Combine Degree Centrality and Pagerank into a single dataframe
+centrality_df <- tibble(
+  user = V(network_graph)$name,
+  degree = central_degree,
+  pagerank = pagerk
+)
+head(centrality_df)
+```
+
+```{r}
+# Top User by Degree Centrality
+top_degree <- centrality_df |> 
+  arrange(desc(degree)) |> 
+  slice(1)
+
+paste0("Top user by Degree Centrality:")
+print(top_degree)
+
+# Top User by PageRank
+top_pgrk <- centrality_df |> 
+  arrange(desc(pagerank)) |> 
+  slice(1)
+
+paste0("Top user by PageRank:")
+print(top_pgrk)
+```
+
+### Evaluation on the top user result of Degree Centrality and PageRank
+
+The figures indicate a clear differentiation between popularity and influence within the network structure. J_hearsay user exhibits the highest Degree Centrality, with 134 connections. This indicates that this is the most active account, possessing the broadest reach in discussions about AI. In contrast, artificial3d user achieves the highest PageRank score (0.129), despite having fewer direct connections (116) than j_hearsay (134). 
+
+As a result, the disparity suggests that, although j_hearsay has a greater number of connections, artificial3d's connections are superior in terms of quality owing to influential followers. From a network perspective, artificial3d is a more reputable account whose credibility is validated by followers having high-scoring PageRank within the AI community, rather than solely by its raw number of connections.
 
